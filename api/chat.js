@@ -1,30 +1,36 @@
-// api/chat.js — Node.js Serverless Function (returns JSON, with errors surfaced)
 export default async function handler(req, res) {
-  // Basic CORS (tighten later)
-  const origin = req.headers.origin || "*";
-  res.setHeader("Access-Control-Allow-Origin", origin);
+  // --- CORS headers ---
+  res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Use POST" });
 
+  // --- Validate API key ---
   const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: "Missing OPENAI_API_KEY" });
+  if (!apiKey) {
+    return res.status(500).json({ error: "Missing OPENAI_API_KEY in Vercel settings" });
+  }
 
+  // --- Parse messages ---
   let body = req.body;
-  if (typeof body === "string") { try { body = JSON.parse(body); } catch { body = {}; } }
-  const userMessages = Array.isArray(body.messages) ? body.messages : [];
+  if (typeof body === "string") {
+    try { body = JSON.parse(body); } catch { body = {}; }
+  }
+  const messages = Array.isArray(body.messages) ? body.messages : [];
 
-  const messages = [
-    { role: "system", content: `
-      You are the official Trading Singularity AI Coach for Simeon Ivanov's community.
-      Tone: direct, motivating, data-driven, zero fluff.
-      Focus on trading performance, discipline and consistency. No financial advice.
-      End each reply with one actionable insight.
-    `},
-    ...userMessages
+  // --- Build full conversation ---
+  const fullMessages = [
+    {
+      role: "system",
+      content: `You are the official Trading Singularity AI Coach.
+Respond like a trading performance coach focusing on discipline, data, and consistency. 
+Use short, actionable sentences. No financial advice.`
+    },
+    ...messages
   ];
 
+  // --- Call OpenAI ---
   try {
     const r = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -34,24 +40,23 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: "gpt-4o-mini",
-        messages,
-        max_tokens: 400,
-        temperature: 0.4
+        messages: fullMessages,
+        temperature: 0.4,
+        max_tokens: 500
       })
     });
 
-    const data = await r.json().catch(() => ({}));
+    const data = await r.json();
 
     if (!r.ok) {
-      // Surface upstream error message
-      return res.status(r.status).json({ error: data?.error?.message || "OpenAI error" });
+      return res.status(r.status).json({
+        error: data?.error?.message || "OpenAI API error"
+      });
     }
 
     const reply = data?.choices?.[0]?.message?.content;
-    if (!reply) return res.status(200).json({ error: "Empty response from model" });
-
     res.status(200).json({ reply });
-  } catch (e) {
-    res.status(500).json({ error: e?.message || "Server error" });
+  } catch (err) {
+    res.status(500).json({ error: err.message || "Server error" });
   }
 }
